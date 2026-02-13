@@ -6,8 +6,9 @@ import io
 import zipfile
 
 app = Flask(__name__)
-app.secret_key = 'gmail_extractor_final_v1'
+app.secret_key = 'gmail_extractor_pro_v2'
 
+# Connect to Gmail
 def get_imap_conn():
     if 'email_user' not in session or 'email_pass' not in session:
         return None
@@ -18,12 +19,16 @@ def get_imap_conn():
     except:
         return None
 
+# Clean up weird subject lines
 def decode_str(s):
     if not s: return ""
     decoded_list = decode_header(s)
     header_value, charset = decoded_list[0]
     if isinstance(header_value, bytes):
-        return header_value.decode(charset or 'utf-8', errors='ignore')
+        try:
+            return header_value.decode(charset or 'utf-8', errors='ignore')
+        except:
+            return header_value.decode('utf-8', errors='ignore')
     return str(header_value)
 
 @app.route('/', methods=['GET', 'POST'])
@@ -31,20 +36,29 @@ def index():
     if request.method == 'POST':
         session['email_user'] = request.form['email']
         session['email_pass'] = request.form['password']
+        
+        # Test Login
         mail = get_imap_conn()
         if mail:
             mail.logout()
             return redirect(url_for('dashboard'))
         else:
-            flash("Login failed. Verify your Gmail Address and App Password.")
+            flash("Login failed. Check your App Password.")
+    
     return render_template('index.html', page='login')
 
 @app.route('/dashboard')
 def dashboard():
     mail = get_imap_conn()
     if not mail: return redirect(url_for('index'))
+    
+    # Get Folder List
     _, folders_data = mail.list()
-    folders = [f.decode().split(' "/" ')[-1].strip('"') for f in folders_data]
+    folders = []
+    for f in folders_data:
+        name = f.decode().split(' "/" ')[-1].strip('"')
+        folders.append(name)
+    
     mail.logout()
     return render_template('index.html', page='dashboard', folders=folders)
 
@@ -52,31 +66,43 @@ def dashboard():
 def get_emails():
     folder = request.form.get('folder', 'INBOX')
     page = int(request.form.get('page', 1))
-    sort_order = request.form.get('sort', 'newest')
+    sort_order = request.form.get('sort', 'newest') # Get sort preference
     per_page = 100
     
     mail = get_imap_conn()
     if not mail: return jsonify({'error': 'Session expired'})
     
     try:
-        status, data = mail.select(f'"{folder}"', readonly=True)
-        total_emails = int(data[0])
-        if total_emails == 0:
+        mail.select(f'"{folder}"', readonly=True)
+        
+        # 1. Fetch ALL IDs
+        _, search_data = mail.search(None, 'ALL')
+        
+        # 2. CRITICAL FIX: Convert IDs to Integers for correct sorting
+        # If we don't do this, "10" comes before "2"
+        all_ids = [int(id) for id in search_data[0].split()]
+        
+        # 3. Sort them correctly
+        if sort_order == 'newest':
+            all_ids.sort(reverse=True) # Newest (High ID) first
+        else:
+            all_ids.sort() # Oldest (Low ID) first
+            
+        # 4. Handle Empty Folder
+        if not all_ids:
             return jsonify({'emails': [], 'has_more': False})
 
-        # Calculate ID sequences
-        if sort_order == 'newest':
-            all_ids = list(range(total_emails, 0, -1))
-        else:
-            all_ids = list(range(1, total_emails + 1))
-        
+        # 5. Slice for Pagination
         start = (page - 1) * per_page
         end = start + per_page
         page_ids = all_ids[start:end]
         
         email_list = []
         for num in page_ids:
+            # Fetch headers only (Fast)
+            # We convert 'num' back to string for the IMAP command
             _, data = mail.fetch(str(num), '(BODY[HEADER.FIELDS (SUBJECT FROM DATE)])')
+            
             if data and data[0]:
                 msg = email.message_from_bytes(data[0][1])
                 email_list.append({
@@ -98,12 +124,20 @@ def download_raw(folder, msg_id):
     mail = get_imap_conn()
     mail.select(f'"{folder}"', readonly=True)
     _, data = mail.fetch(msg_id, '(RFC822)')
-    return send_file(io.BytesIO(data[0][1]), mimetype='text/plain', as_attachment=True, download_name=f"msg_{msg_id}.txt")
+    
+    # Download as .txt
+    return send_file(
+        io.BytesIO(data[0][1]),
+        mimetype='text/plain',
+        as_attachment=True,
+        download_name=f"email_{msg_id}.txt"
+    )
 
 @app.route('/bulk_download', methods=['POST'])
 def bulk_download():
     folder = request.form.get('folder')
     msg_ids = request.form.getlist('msg_ids[]')
+    
     mail = get_imap_conn()
     mail.select(f'"{folder}"', readonly=True)
     
@@ -114,7 +148,12 @@ def bulk_download():
             zf.writestr(f"email_{mid}.txt", data[0][1])
     
     memory_file.seek(0)
-    return send_file(memory_file, mimetype='application/zip', as_attachment=True, download_name=f"{folder}_export.zip")
+    return send_file(
+        memory_file,
+        mimetype='application/zip',
+        as_attachment=True,
+        download_name=f"{folder}_export.zip"
+    )
 
 @app.route('/logout')
 def logout():
