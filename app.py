@@ -6,7 +6,7 @@ import io
 import zipfile
 
 app = Flask(__name__)
-app.secret_key = 'gmail_vault_2026' # Change this to any random string
+app.secret_key = 'gmail_extractor_final_v1'
 
 def get_imap_conn():
     if 'email_user' not in session or 'email_pass' not in session:
@@ -36,7 +36,7 @@ def index():
             mail.logout()
             return redirect(url_for('dashboard'))
         else:
-            flash("Login failed. Verify your Gmail address and App Password.")
+            flash("Login failed. Verify your Gmail Address and App Password.")
     return render_template('index.html', page='login')
 
 @app.route('/dashboard')
@@ -52,18 +52,23 @@ def dashboard():
 def get_emails():
     folder = request.form.get('folder', 'INBOX')
     page = int(request.form.get('page', 1))
+    sort_order = request.form.get('sort', 'newest')
     per_page = 100
     
     mail = get_imap_conn()
     if not mail: return jsonify({'error': 'Session expired'})
     
     try:
-        mail.select(f'"{folder}"', readonly=True)
-        _, messages = mail.search(None, 'ALL')
-        all_ids = messages[0].split()
-        
-        # Sort Newest First
-        all_ids.reverse()
+        status, data = mail.select(f'"{folder}"', readonly=True)
+        total_emails = int(data[0])
+        if total_emails == 0:
+            return jsonify({'emails': [], 'has_more': False})
+
+        # Calculate ID sequences
+        if sort_order == 'newest':
+            all_ids = list(range(total_emails, 0, -1))
+        else:
+            all_ids = list(range(1, total_emails + 1))
         
         start = (page - 1) * per_page
         end = start + per_page
@@ -71,15 +76,15 @@ def get_emails():
         
         email_list = []
         for num in page_ids:
-            # Fetch Subject, From, and Date specifically for performance
-            _, data = mail.fetch(num, '(BODY[HEADER.FIELDS (SUBJECT FROM DATE)])')
-            msg = email.message_from_bytes(data[0][1])
-            email_list.append({
-                'id': num.decode(),
-                'subject': decode_str(msg["Subject"]),
-                'sender': decode_str(msg["From"]),
-                'date': decode_str(msg["Date"])
-            })
+            _, data = mail.fetch(str(num), '(BODY[HEADER.FIELDS (SUBJECT FROM DATE)])')
+            if data and data[0]:
+                msg = email.message_from_bytes(data[0][1])
+                email_list.append({
+                    'id': str(num),
+                    'subject': decode_str(msg["Subject"]),
+                    'sender': decode_str(msg["From"]),
+                    'date': decode_str(msg["Date"])
+                })
             
         return jsonify({
             'emails': email_list,
@@ -93,12 +98,7 @@ def download_raw(folder, msg_id):
     mail = get_imap_conn()
     mail.select(f'"{folder}"', readonly=True)
     _, data = mail.fetch(msg_id, '(RFC822)')
-    return send_file(
-        io.BytesIO(data[0][1]), 
-        mimetype='text/plain', 
-        as_attachment=True, 
-        download_name=f"email_{msg_id}.txt"
-    )
+    return send_file(io.BytesIO(data[0][1]), mimetype='text/plain', as_attachment=True, download_name=f"msg_{msg_id}.txt")
 
 @app.route('/bulk_download', methods=['POST'])
 def bulk_download():
@@ -114,12 +114,7 @@ def bulk_download():
             zf.writestr(f"email_{mid}.txt", data[0][1])
     
     memory_file.seek(0)
-    return send_file(
-        memory_file, 
-        mimetype='application/zip', 
-        as_attachment=True, 
-        download_name=f"{folder}_export.zip"
-    )
+    return send_file(memory_file, mimetype='application/zip', as_attachment=True, download_name=f"{folder}_export.zip")
 
 @app.route('/logout')
 def logout():
