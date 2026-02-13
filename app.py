@@ -5,9 +5,10 @@ from email.utils import parsedate_to_datetime
 from flask import Flask, render_template, request, session, redirect, url_for, send_file, flash, jsonify
 import io
 import zipfile
+from datetime import datetime
 
 app = Flask(__name__)
-app.secret_key = 'gmail_extractor_pro_2026_v4'
+app.secret_key = 'gmail_final_perfect_sort'
 
 def get_imap_conn():
     if 'email_user' not in session or 'email_pass' not in session:
@@ -24,19 +25,8 @@ def decode_str(s):
     decoded_list = decode_header(s)
     header_value, charset = decoded_list[0]
     if isinstance(header_value, bytes):
-        try:
-            return header_value.decode(charset or 'utf-8', errors='ignore')
-        except:
-            return header_value.decode('utf-8', errors='ignore')
+        return header_value.decode(charset or 'utf-8', errors='ignore')
     return str(header_value)
-
-def clean_date(date_str):
-    if not date_str: return ""
-    try:
-        dt = parsedate_to_datetime(date_str)
-        return dt.strftime('%Y-%m-%d %H:%M')
-    except:
-        return date_str
 
 @app.route('/', methods=['GET', 'POST'])
 def index():
@@ -73,29 +63,46 @@ def get_emails():
     try:
         mail.select(f'"{folder}"', readonly=True)
         _, search_data = mail.search(None, 'ALL')
-        all_ids = [int(id) for id in search_data[0].split()] if search_data[0] else []
+        all_ids = [id.decode() for id in search_data[0].split()]
         
-        # Proper Numeric Sort
-        if sort_order == 'newest':
-            all_ids.sort(reverse=True)
-        else:
-            all_ids.sort()
-            
+        # Slicing the IDs first (for performance)
+        # We take a slightly larger slice to ensure sorting window is accurate
         start = (page - 1) * per_page
         end = start + per_page
+        
+        # We still need to reverse for 'newest' to get the latest IDs
+        if sort_order == 'newest':
+            all_ids.reverse()
+            
         page_ids = all_ids[start:end]
         
         email_list = []
         for num in page_ids:
-            _, data = mail.fetch(str(num), '(BODY[HEADER.FIELDS (SUBJECT FROM DATE)])')
+            _, data = mail.fetch(num, '(BODY[HEADER.FIELDS (SUBJECT FROM DATE)])')
             if data and data[0]:
                 msg = email.message_from_bytes(data[0][1])
+                raw_date = decode_str(msg["Date"])
+                
+                # Convert to sortable object
+                try:
+                    dt_obj = parsedate_to_datetime(raw_date)
+                except:
+                    dt_obj = datetime.min
+                
                 email_list.append({
-                    'id': str(num),
+                    'id': num,
                     'subject': decode_str(msg["Subject"]),
                     'sender': decode_str(msg["From"]),
-                    'date': clean_date(decode_str(msg["Date"]))
+                    'date_obj': dt_obj,
+                    'date_display': dt_obj.strftime('%Y-%m-%d %H:%M')
                 })
+        
+        # CRITICAL FIX: Sort the resulting list by the actual datetime object
+        email_list.sort(key=lambda x: x['date_obj'], reverse=(sort_order == 'newest'))
+
+        # Remove the datetime object before sending JSON
+        for e in email_list:
+            del e['date_obj']
             
         return jsonify({'emails': email_list, 'has_more': end < len(all_ids)})
     except Exception as e:
@@ -120,7 +127,7 @@ def bulk_download():
             _, data = mail.fetch(mid, '(RFC822)')
             zf.writestr(f"email_{mid}.txt", data[0][1])
     memory_file.seek(0)
-    return send_file(memory_file, mimetype='application/zip', as_attachment=True, download_name=f"{folder}_bulk_export.zip")
+    return send_file(memory_file, mimetype='application/zip', as_attachment=True, download_name=f"{folder}_export.zip")
 
 @app.route('/logout')
 def logout():
