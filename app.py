@@ -6,9 +6,8 @@ import io
 import zipfile
 
 app = Flask(__name__)
-app.secret_key = 'super_secret_key_change_this'  # Needed for session storage
+app.secret_key = 'gmail_extractor_secret_key' # In production, use a random string
 
-# Helper: Connect to Gmail
 def get_imap_conn():
     if 'email_user' not in session or 'email_pass' not in session:
         return None
@@ -16,19 +15,15 @@ def get_imap_conn():
         mail = imaplib.IMAP4_SSL("imap.gmail.com")
         mail.login(session['email_user'], session['email_pass'])
         return mail
-    except Exception as e:
+    except Exception:
         return None
 
-# Helper: Decode email subjects/senders
 def decode_str(s):
     if not s: return ""
     decoded_list = decode_header(s)
     header_value, charset = decoded_list[0]
     if isinstance(header_value, bytes):
-        try:
-            return header_value.decode(charset or 'utf-8')
-        except:
-            return header_value.decode('utf-8', errors='ignore')
+        return header_value.decode(charset or 'utf-8', errors='ignore')
     return str(header_value)
 
 @app.route('/', methods=['GET', 'POST'])
@@ -36,30 +31,20 @@ def index():
     if request.method == 'POST':
         session['email_user'] = request.form['email']
         session['email_pass'] = request.form['password']
-        
-        # Test connection
         mail = get_imap_conn()
         if mail:
             mail.logout()
             return redirect(url_for('dashboard'))
         else:
-            flash("Login failed. Check email or App Password.")
-    
+            flash("Login failed. Verify your Gmail address and App Password.")
     return render_template('index.html', page='login')
 
 @app.route('/dashboard')
 def dashboard():
     mail = get_imap_conn()
     if not mail: return redirect(url_for('index'))
-
-    # Get Folders (Labels)
-    status, folders_data = mail.list()
-    folders = []
-    for f in folders_data:
-        # Parse folder name (simple parsing)
-        name = f.decode().split(' "/" ')[-1].strip('"')
-        folders.append(name)
-    
+    _, folders_data = mail.list()
+    folders = [f.decode().split(' "/" ')[-1].strip('"') for f in folders_data]
     mail.logout()
     return render_template('index.html', page='dashboard', folders=folders)
 
@@ -67,28 +52,20 @@ def dashboard():
 def get_emails():
     folder = request.form.get('folder', 'INBOX')
     mail = get_imap_conn()
-    if not mail: return jsonify({'error': 'Not logged in'})
-
+    if not mail: return jsonify({'error': 'Session expired'})
     try:
         mail.select(f'"{folder}"', readonly=True)
-        # Search for all emails (Limit to last 20 for speed in this demo)
-        status, messages = mail.search(None, 'ALL')
-        mail_ids = messages[0].split()[-20:] # Get last 20 emails (Remove [-20:] to get all)
-        
+        _, messages = mail.search(None, 'ALL')
+        mail_ids = messages[0].split()[-30:] # Fetch last 30 for performance
         email_list = []
-        # Fetch headers only
         for num in reversed(mail_ids):
-            _, msg_data = mail.fetch(num, '(RFC822.HEADER)')
-            for response_part in msg_data:
-                if isinstance(response_part, tuple):
-                    msg = email.message_from_bytes(response_part[1])
-                    subject = decode_str(msg["Subject"])
-                    sender = decode_str(msg["From"])
-                    email_list.append({
-                        'id': num.decode(),
-                        'subject': subject,
-                        'sender': sender
-                    })
+            _, data = mail.fetch(num, '(RFC822.HEADER)')
+            msg = email.message_from_bytes(data[0][1])
+            email_list.append({
+                'id': num.decode(),
+                'subject': decode_str(msg["Subject"]),
+                'sender': decode_str(msg["From"])
+            })
         return jsonify({'emails': email_list})
     except Exception as e:
         return jsonify({'error': str(e)})
@@ -97,43 +74,37 @@ def get_emails():
 def download_raw(folder, msg_id):
     mail = get_imap_conn()
     if not mail: return redirect(url_for('index'))
-    
     mail.select(f'"{folder}"', readonly=True)
     _, data = mail.fetch(msg_id, '(RFC822)')
-    raw_email = data[0][1]
-    
+    # Return as .txt file
     return send_file(
-        io.BytesIO(raw_email),
-        mimetype='message/rfc822',
+        io.BytesIO(data[0][1]),
+        mimetype='text/plain',
         as_attachment=True,
-        download_name=f"email_{msg_id}.eml"
+        download_name=f"email_{msg_id}.txt"
     )
 
 @app.route('/bulk_download', methods=['POST'])
 def bulk_download():
     folder = request.form.get('folder')
-    msg_ids = request.form.getlist('msg_ids[]') # Get list of selected IDs
+    msg_ids = request.form.getlist('msg_ids[]')
+    if not msg_ids: return "No emails selected", 400
     
-    if not msg_ids:
-        return "No emails selected", 400
-
     mail = get_imap_conn()
     mail.select(f'"{folder}"', readonly=True)
-
-    # Create an in-memory zip file
     memory_file = io.BytesIO()
-    with zipfile.ZipFile(memory_file, 'w', zipfile.ZIP_DEFLATED) as zf:
+    with zipfile.ZipFile(memory_file, 'w') as zf:
         for mid in msg_ids:
             _, data = mail.fetch(mid, '(RFC822)')
-            raw_email = data[0][1]
-            zf.writestr(f"email_{mid}.eml", raw_email)
+            # Add to zip as .txt
+            zf.writestr(f"email_{mid}.txt", data[0][1])
     
     memory_file.seek(0)
     return send_file(
         memory_file,
         mimetype='application/zip',
         as_attachment=True,
-        download_name=f"bulk_emails_{folder}.zip"
+        download_name=f"{folder}_bulk_export.zip"
     )
 
 @app.route('/logout')
