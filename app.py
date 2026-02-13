@@ -1,14 +1,14 @@
 import imaplib
 import email
 from email.header import decode_header
+from email.utils import parsedate_to_datetime # New Import
 from flask import Flask, render_template, request, session, redirect, url_for, send_file, flash, jsonify
 import io
 import zipfile
 
 app = Flask(__name__)
-app.secret_key = 'gmail_extractor_pro_v2'
+app.secret_key = 'gmail_clean_date_v3'
 
-# Connect to Gmail
 def get_imap_conn():
     if 'email_user' not in session or 'email_pass' not in session:
         return None
@@ -19,7 +19,6 @@ def get_imap_conn():
     except:
         return None
 
-# Clean up weird subject lines
 def decode_str(s):
     if not s: return ""
     decoded_list = decode_header(s)
@@ -31,34 +30,35 @@ def decode_str(s):
             return header_value.decode('utf-8', errors='ignore')
     return str(header_value)
 
+# New Helper: Formats date to "YYYY-MM-DD HH:MM"
+def clean_date(date_str):
+    if not date_str: return ""
+    try:
+        dt = parsedate_to_datetime(date_str)
+        # Return format: 2026-02-13 14:30 (No timezone)
+        return dt.strftime('%Y-%m-%d %H:%M') 
+    except:
+        return date_str # Return original if parsing fails
+
 @app.route('/', methods=['GET', 'POST'])
 def index():
     if request.method == 'POST':
         session['email_user'] = request.form['email']
         session['email_pass'] = request.form['password']
-        
-        # Test Login
         mail = get_imap_conn()
         if mail:
             mail.logout()
             return redirect(url_for('dashboard'))
         else:
             flash("Login failed. Check your App Password.")
-    
     return render_template('index.html', page='login')
 
 @app.route('/dashboard')
 def dashboard():
     mail = get_imap_conn()
     if not mail: return redirect(url_for('index'))
-    
-    # Get Folder List
     _, folders_data = mail.list()
-    folders = []
-    for f in folders_data:
-        name = f.decode().split(' "/" ')[-1].strip('"')
-        folders.append(name)
-    
+    folders = [f.decode().split(' "/" ')[-1].strip('"') for f in folders_data]
     mail.logout()
     return render_template('index.html', page='dashboard', folders=folders)
 
@@ -66,7 +66,7 @@ def dashboard():
 def get_emails():
     folder = request.form.get('folder', 'INBOX')
     page = int(request.form.get('page', 1))
-    sort_order = request.form.get('sort', 'newest') # Get sort preference
+    sort_order = request.form.get('sort', 'newest')
     per_page = 100
     
     mail = get_imap_conn()
@@ -74,42 +74,30 @@ def get_emails():
     
     try:
         mail.select(f'"{folder}"', readonly=True)
-        
-        # 1. Fetch ALL IDs
         _, search_data = mail.search(None, 'ALL')
         
-        # 2. CRITICAL FIX: Convert IDs to Integers for correct sorting
-        # If we don't do this, "10" comes before "2"
-        all_ids = [int(id) for id in search_data[0].split()]
+        # Parse IDs to integers for correct sorting
+        all_ids = [int(id) for id in search_data[0].split()] if search_data[0] else []
         
-        # 3. Sort them correctly
         if sort_order == 'newest':
-            all_ids.sort(reverse=True) # Newest (High ID) first
+            all_ids.sort(reverse=True)
         else:
-            all_ids.sort() # Oldest (Low ID) first
+            all_ids.sort()
             
-        # 4. Handle Empty Folder
-        if not all_ids:
-            return jsonify({'emails': [], 'has_more': False})
-
-        # 5. Slice for Pagination
         start = (page - 1) * per_page
         end = start + per_page
         page_ids = all_ids[start:end]
         
         email_list = []
         for num in page_ids:
-            # Fetch headers only (Fast)
-            # We convert 'num' back to string for the IMAP command
             _, data = mail.fetch(str(num), '(BODY[HEADER.FIELDS (SUBJECT FROM DATE)])')
-            
             if data and data[0]:
                 msg = email.message_from_bytes(data[0][1])
                 email_list.append({
                     'id': str(num),
                     'subject': decode_str(msg["Subject"]),
                     'sender': decode_str(msg["From"]),
-                    'date': decode_str(msg["Date"])
+                    'date': clean_date(decode_str(msg["Date"])) # Apply clean_date here
                 })
             
         return jsonify({
@@ -124,20 +112,12 @@ def download_raw(folder, msg_id):
     mail = get_imap_conn()
     mail.select(f'"{folder}"', readonly=True)
     _, data = mail.fetch(msg_id, '(RFC822)')
-    
-    # Download as .txt
-    return send_file(
-        io.BytesIO(data[0][1]),
-        mimetype='text/plain',
-        as_attachment=True,
-        download_name=f"email_{msg_id}.txt"
-    )
+    return send_file(io.BytesIO(data[0][1]), mimetype='text/plain', as_attachment=True, download_name=f"email_{msg_id}.txt")
 
 @app.route('/bulk_download', methods=['POST'])
 def bulk_download():
     folder = request.form.get('folder')
     msg_ids = request.form.getlist('msg_ids[]')
-    
     mail = get_imap_conn()
     mail.select(f'"{folder}"', readonly=True)
     
@@ -148,12 +128,7 @@ def bulk_download():
             zf.writestr(f"email_{mid}.txt", data[0][1])
     
     memory_file.seek(0)
-    return send_file(
-        memory_file,
-        mimetype='application/zip',
-        as_attachment=True,
-        download_name=f"{folder}_export.zip"
-    )
+    return send_file(memory_file, mimetype='application/zip', as_attachment=True, download_name=f"{folder}_export.zip")
 
 @app.route('/logout')
 def logout():
