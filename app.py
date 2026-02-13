@@ -8,7 +8,7 @@ import zipfile
 from datetime import datetime
 
 app = Flask(__name__)
-app.secret_key = 'gmail_extractor_final_stable'
+app.secret_key = 'gmail_stable_v7_optimized'
 
 def get_imap_conn():
     if 'email_user' not in session or 'email_pass' not in session:
@@ -22,11 +22,14 @@ def get_imap_conn():
 
 def decode_str(s):
     if not s: return ""
-    decoded_list = decode_header(s)
-    header_value, charset = decoded_list[0]
-    if isinstance(header_value, bytes):
-        return header_value.decode(charset or 'utf-8', errors='ignore')
-    return str(header_value)
+    try:
+        decoded_list = decode_header(s)
+        header_value, charset = decoded_list[0]
+        if isinstance(header_value, bytes):
+            return header_value.decode(charset or 'utf-8', errors='ignore')
+        return str(header_value)
+    except:
+        return str(s)
 
 @app.route('/', methods=['GET', 'POST'])
 def index():
@@ -52,7 +55,7 @@ def get_emails():
     folder = request.form.get('folder', 'INBOX')
     page = int(request.form.get('page', 1))
     sort_order = request.form.get('sort', 'newest')
-    per_page = 50 
+    per_page = 40  # Reduced slightly to ensure we beat the Vercel 10s timeout
     
     mail = get_imap_conn()
     if not mail: return jsonify({'error': 'Session expired'}), 401
@@ -60,51 +63,44 @@ def get_emails():
     try:
         mail.select(f'"{folder}"', readonly=True)
         _, search_data = mail.search(None, 'ALL')
+        all_ids = search_data[0].split()
         
-        # Convert IDs to integers for perfect numeric sorting
-        all_ids = [int(i) for i in search_data[0].split()]
         if not all_ids:
             return jsonify({'emails': [], 'has_more': False})
 
-        # Step 1: Sort IDs numerically
-        all_ids.sort(reverse=(sort_order == 'newest'))
+        # Pre-sort numerically by ID (fastest initial sort)
+        all_ids.sort(key=int, reverse=(sort_order == 'newest'))
         
-        # Step 2: Slice for pagination
         start = (page - 1) * per_page
         end = start + per_page
         page_ids = all_ids[start:end]
         
         email_list = []
         for num in page_ids:
-            _, data = mail.fetch(str(num), '(BODY[HEADER.FIELDS (SUBJECT FROM DATE)])')
+            # ONLY fetch the headers needed to save time
+            _, data = mail.fetch(num, '(BODY[HEADER.FIELDS (SUBJECT FROM DATE)])')
             if data and data[0]:
                 msg = email.message_from_bytes(data[0][1])
                 date_str = decode_str(msg["Date"])
                 try:
                     dt_obj = parsedate_to_datetime(date_str)
-                    display_date = dt_obj.strftime('%Y-%m-%d %H:%M')
                 except:
                     dt_obj = datetime.min
-                    display_date = date_str
                 
                 email_list.append({
-                    'id': str(num),
+                    'id': num.decode(),
                     'subject': decode_str(msg["Subject"]),
                     'sender': decode_str(msg["From"]),
-                    'date_display': display_date,
-                    'dt': dt_obj
+                    'dt': dt_obj,
+                    'date_display': dt_obj.strftime('%Y-%m-%d %H:%M') if dt_obj != datetime.min else "Unknown"
                 })
         
-        # Step 3: Secondary Sort by actual time to match Gmail UI exactly
+        # Perfect Chronological Sort for the batch
         email_list.sort(key=lambda x: x['dt'], reverse=(sort_order == 'newest'))
         
-        # Clean up dt objects before sending to frontend
-        for e in email_list: del e['dt']
+        for e in email_list: del e['dt'] # Clean up for JSON
             
-        return jsonify({
-            'emails': email_list, 
-            'has_more': end < len(all_ids)
-        })
+        return jsonify({'emails': email_list, 'has_more': end < len(all_ids)})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -127,12 +123,9 @@ def bulk_download():
             _, data = mail.fetch(mid, '(RFC822)')
             zf.writestr(f"email_{mid}.txt", data[0][1])
     memory_file.seek(0)
-    return send_file(memory_file, mimetype='application/zip', as_attachment=True, download_name="gmail_export.zip")
+    return send_file(memory_file, mimetype='application/zip', as_attachment=True, download_name="export.zip")
 
 @app.route('/logout')
 def logout():
     session.clear()
     return redirect(url_for('index'))
-
-if __name__ == '__main__':
-    app.run(debug=True)
