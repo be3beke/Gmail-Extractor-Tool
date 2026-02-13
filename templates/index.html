@@ -1,116 +1,153 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>Gmail Extractor</title>
+    <meta charset="UTF-8">
+    <title>Gmail Extractor Pro</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
-        .sidebar { height: 100vh; background: #f8f9fa; border-right: 1px solid #ddd; padding: 20px; position: fixed; width: 250px; overflow-y: auto;}
-        .main-content { margin-left: 260px; padding: 20px; }
-        .folder-btn { cursor: pointer; padding: 10px; border-bottom: 1px solid #eee; }
-        .folder-btn:hover { background: #e9ecef; }
-        .date-col { font-size: 0.8rem; color: #666; width: 150px; }
+        body { background: #f4f7f6; }
+        .sidebar { height: 100vh; background: #2c3e50; color: white; position: fixed; width: 260px; padding: 20px; overflow-y: auto; }
+        .main-content { margin-left: 260px; padding: 30px; }
+        .folder-link { cursor: pointer; padding: 10px; border-radius: 5px; transition: 0.2s; color: #bdc3c7; text-decoration: none; display: block; }
+        .folder-link:hover { background: #34495e; color: white; }
+        .email-card { background: white; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
+        .search-box { margin-bottom: 20px; }
     </style>
 </head>
 <body>
+
 {% if page == 'login' %}
-    <div class="container mt-5 pt-5">
-        <div class="row justify-content-center">
-            <div class="col-md-4 card shadow p-4">
-                <h3 class="mb-4">Gmail Login</h3>
-                <form method="POST">
-                    <input type="email" name="email" class="form-control mb-3" placeholder="Gmail Address" required>
-                    <input type="password" name="password" class="form-control mb-3" placeholder="App Password" required>
-                    <button class="btn btn-primary w-100">Connect</button>
-                </form>
-                {% with msgs = get_flashed_messages() %}{% if msgs %}<p class="text-danger mt-2">{{msgs[0]}}</p>{% endif %}{% endwith %}
-            </div>
-        </div>
-    </div>
-{% else %}
-    <div class="sidebar">
-        <h5>Folders</h5>
-        {% for f in folders %}<div class="folder-btn" onclick="initLoad('{{f}}')">📁 {{f}}</div>{% endfor %}
-        <a href="/logout" class="btn btn-outline-danger btn-sm mt-4 w-100">Logout</a>
-    </div>
-    <div class="main-content">
-        <div class="d-flex justify-content-between align-items-center mb-4">
-            <h2 id="current-folder">Select a Folder</h2>
-            <form id="bulk-form" action="/bulk_download" method="POST">
-                <input type="hidden" name="folder" id="hidden-folder">
-                <button type="submit" id="bulk-btn" class="btn btn-success" disabled>Download Selected (.zip)</button>
+<div class="container mt-5">
+    <div class="row justify-content-center">
+        <div class="col-md-4 card shadow p-4 mt-5">
+            <h3 class="text-center mb-4">Gmail Connector</h3>
+            <form method="POST">
+                <div class="mb-3">
+                    <label class="form-label">Gmail Address</label>
+                    <input type="email" name="email" class="form-control" required>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">App Password</label>
+                    <input type="password" name="password" class="form-control" required>
+                </div>
+                <button class="btn btn-primary w-100">Connect Account</button>
             </form>
+            {% with msgs = get_flashed_messages() %}{% if msgs %}<p class="text-danger mt-3 text-center">{{msgs[0]}}</p>{% endif %}{% endwith %}
         </div>
-        <table class="table table-sm table-hover">
+    </div>
+</div>
+{% else %}
+<div class="sidebar">
+    <h4 class="mb-4">Gmail Folders</h4>
+    {% for f in folders %}
+    <a class="folder-link" onclick="initFolder('{{f}}')">📁 {{f}}</a>
+    {% endfor %}
+    <hr>
+    <a href="/logout" class="btn btn-outline-danger btn-sm w-100">Sign Out</a>
+</div>
+
+<div class="main-content">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2 id="folder-title">Select a Folder</h2>
+        <form id="bulk-form" action="/bulk_download" method="POST">
+            <input type="hidden" name="folder" id="hidden-folder">
+            <button type="submit" id="bulk-btn" class="btn btn-success shadow-sm" disabled>Download Selected (.zip)</button>
+        </form>
+    </div>
+
+    <div class="search-box">
+        <input type="text" id="search-bar" class="form-control form-control-lg shadow-sm" placeholder="🔍 Search current page by Subject or Sender..." onkeyup="searchLocal()">
+    </div>
+
+    <div class="email-card">
+        <table class="table table-hover mb-0">
             <thead class="table-light">
                 <tr>
-                    <th><input type="checkbox" id="master-check"></th>
-                    <th>Date</th>
+                    <th width="40"><input type="checkbox" id="master-check" class="form-check-input"></th>
+                    <th width="180">Date (Newest)</th>
                     <th>Subject</th>
                     <th>Sender</th>
-                    <th>Action</th>
+                    <th width="100">Format</th>
                 </tr>
             </thead>
-            <tbody id="email-table"></tbody>
+            <tbody id="email-table">
+                <tr><td colspan="5" class="text-center py-5 text-muted">Click a folder on the left to begin.</td></tr>
+            </tbody>
         </table>
-        <div id="pagination-area" class="pb-5"></div>
     </div>
+    <div id="pagination-wrapper" class="mt-4"></div>
+</div>
 
-    <script>
-        let currentPage = 1;
-        let activeFolder = '';
+<script>
+    let currentPage = 1;
+    let currentFolder = '';
 
-        function initLoad(folder) {
-            activeFolder = folder;
-            currentPage = 1;
-            document.getElementById('email-table').innerHTML = '';
-            loadEmails();
+    function initFolder(folder) {
+        currentFolder = folder;
+        currentPage = 1;
+        document.getElementById('email-table').innerHTML = '';
+        document.getElementById('search-bar').value = '';
+        fetchEmails();
+    }
+
+    async function fetchEmails() {
+        document.getElementById('folder-title').innerText = currentFolder;
+        document.getElementById('hidden-folder').value = currentFolder;
+        
+        const fd = new FormData();
+        fd.append('folder', currentFolder);
+        fd.append('page', currentPage);
+
+        const res = await fetch('/get_emails', {method: 'POST', body: fd});
+        const data = await res.json();
+        
+        const tbody = document.getElementById('email-table');
+        data.emails.forEach(e => {
+            const row = `
+            <tr>
+                <td><input type="checkbox" name="msg_ids[]" value="${e.id}" form="bulk-form" class="row-check form-check-input"></td>
+                <td class="text-muted" style="font-size:0.85rem">${e.date}</td>
+                <td><strong>${e.subject}</strong></td>
+                <td>${e.sender}</td>
+                <td><a href="/download_raw/${currentFolder}/${e.id}" class="btn btn-sm btn-outline-secondary">Full Source</a></td>
+            </tr>`;
+            tbody.innerHTML += row;
+        });
+
+        const pag = document.getElementById('pagination-wrapper');
+        if (data.has_more) {
+            pag.innerHTML = `<button class="btn btn-primary w-100 p-2 shadow-sm" onclick="currentPage++; fetchEmails()">Load Next 100 Emails</button>`;
+        } else {
+            pag.innerHTML = `<p class="text-center text-muted">End of folder reached.</p>`;
         }
+        bindEvents();
+    }
 
-        async function loadEmails() {
-            document.getElementById('current-folder').innerText = activeFolder;
-            document.getElementById('hidden-folder').value = activeFolder;
-            
-            const fd = new FormData();
-            fd.append('folder', activeFolder);
-            fd.append('page', currentPage);
+    function searchLocal() {
+        const query = document.getElementById('search-bar').value.toLowerCase();
+        const rows = document.querySelectorAll('#email-table tr');
+        rows.forEach(row => {
+            const text = row.innerText.toLowerCase();
+            row.style.display = text.includes(query) ? "" : "none";
+        });
+    }
 
-            const res = await fetch('/get_emails', {method:'POST', body:fd});
-            const data = await res.json();
-            
-            const tbody = document.getElementById('email-table');
-            data.emails.forEach(e => {
-                tbody.innerHTML += `
-                <tr>
-                    <td><input type="checkbox" name="msg_ids[]" value="${e.id}" form="bulk-form" class="row-check"></td>
-                    <td class="date-col">${e.date}</td>
-                    <td>${e.subject}</td>
-                    <td>${e.sender}</td>
-                    <td><a href="/download_raw/${activeFolder}/${e.id}" class="btn btn-sm btn-link">Download Full Source</a></td>
-                </tr>`;
-            });
+    function bindEvents() {
+        const master = document.getElementById('master-check');
+        const checks = document.querySelectorAll('.row-check');
+        const bulkBtn = document.getElementById('bulk-btn');
 
-            const pagArea = document.getElementById('pagination-area');
-            if (data.has_more) {
-                pagArea.innerHTML = `<button class="btn btn-outline-primary w-100" onclick="currentPage++; loadEmails()">Load Next 100</button>`;
-            } else {
-                pagArea.innerHTML = `<p class="text-center text-muted">All emails loaded.</p>`;
-            }
-            setupCheckboxes();
-        }
-
-        function setupCheckboxes() {
-            const master = document.getElementById('master-check');
-            const checks = document.querySelectorAll('.row-check');
-            const btn = document.getElementById('bulk-btn');
-            master.onclick = () => {
-                checks.forEach(c => c.checked = master.checked);
-                btn.disabled = !master.checked;
+        master.onclick = () => {
+            checks.forEach(c => c.checked = master.checked);
+            bulkBtn.disabled = !master.checked;
+        };
+        checks.forEach(c => {
+            c.onchange = () => {
+                bulkBtn.disabled = ![...checks].some(x => x.checked);
             };
-            checks.forEach(c => c.onchange = () => {
-                btn.disabled = ![...checks].some(x => x.checked);
-            });
-        }
-    </script>
+        });
+    }
+</script>
 {% endif %}
 </body>
 </html>
