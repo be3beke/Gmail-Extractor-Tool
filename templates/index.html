@@ -4,91 +4,110 @@
     <title>Gmail Extractor</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
-        .sidebar { height: 100vh; background: #f8f9fa; border-right: 1px solid #dee2e6; padding: 20px; }
-        .folder-item { cursor: pointer; padding: 8px; border-radius: 4px; }
-        .folder-item:hover { background: #e9ecef; }
-        .email-list { height: 75vh; overflow-y: auto; }
+        .sidebar { height: 100vh; background: #f8f9fa; border-right: 1px solid #ddd; padding: 20px; position: fixed; width: 250px; overflow-y: auto;}
+        .main-content { margin-left: 260px; padding: 20px; }
+        .folder-btn { cursor: pointer; padding: 10px; border-bottom: 1px solid #eee; }
+        .folder-btn:hover { background: #e9ecef; }
+        .date-col { font-size: 0.8rem; color: #666; width: 150px; }
     </style>
 </head>
 <body>
 {% if page == 'login' %}
-    <div class="container mt-5">
+    <div class="container mt-5 pt-5">
         <div class="row justify-content-center">
-            <div class="col-md-4 card p-4 shadow-sm">
-                <h2 class="mb-4">Gmail Connect</h2>
-                {% with messages = get_flashed_messages() %}{% if messages %}<div class="alert alert-danger">{{messages[0]}}</div>{% endif %}{% endwith %}
+            <div class="col-md-4 card shadow p-4">
+                <h3 class="mb-4">Gmail Login</h3>
                 <form method="POST">
-                    <input type="email" name="email" class="form-control mb-3" placeholder="Email Address" required>
+                    <input type="email" name="email" class="form-control mb-3" placeholder="Gmail Address" required>
                     <input type="password" name="password" class="form-control mb-3" placeholder="App Password" required>
-                    <button class="btn btn-primary w-100">Login</button>
+                    <button class="btn btn-primary w-100">Connect</button>
                 </form>
+                {% with msgs = get_flashed_messages() %}{% if msgs %}<p class="text-danger mt-2">{{msgs[0]}}</p>{% endif %}{% endwith %}
             </div>
         </div>
     </div>
 {% else %}
-    <div class="container-fluid">
-        <div class="row">
-            <div class="col-md-3 sidebar">
-                <h4>Folders</h4>
-                <div class="list-group mt-3">
-                    {% for f in folders %}
-                    <div class="folder-item" onclick="loadEmails('{{f}}')">📁 {{f}}</div>
-                    {% endfor %}
-                </div>
-                <a href="/logout" class="btn btn-sm btn-outline-danger mt-4">Sign Out</a>
-            </div>
-            <div class="col-md-9 p-4">
-                <div class="d-flex justify-content-between mb-3">
-                    <h3 id="folder-name">Select a Folder</h3>
-                    <form id="bulk-form" action="/bulk_download" method="POST">
-                        <input type="hidden" name="folder" id="hidden-folder">
-                        <button type="submit" id="bulk-btn" class="btn btn-success" disabled>Download Selected (.zip)</button>
-                    </form>
-                </div>
-                <table class="table table-hover border shadow-sm">
-                    <thead class="table-light">
-                        <tr>
-                            <th><input type="checkbox" id="master-check"></th>
-                            <th>Subject</th>
-                            <th>From</th>
-                            <th>Action</th>
-                        </tr>
-                    </thead>
-                    <tbody id="email-table"></tbody>
-                </table>
-            </div>
-        </div>
+    <div class="sidebar">
+        <h5>Folders</h5>
+        {% for f in folders %}<div class="folder-btn" onclick="initLoad('{{f}}')">📁 {{f}}</div>{% endfor %}
+        <a href="/logout" class="btn btn-outline-danger btn-sm mt-4 w-100">Logout</a>
     </div>
+    <div class="main-content">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h2 id="current-folder">Select a Folder</h2>
+            <form id="bulk-form" action="/bulk_download" method="POST">
+                <input type="hidden" name="folder" id="hidden-folder">
+                <button type="submit" id="bulk-btn" class="btn btn-success" disabled>Download Selected (.zip)</button>
+            </form>
+        </div>
+        <table class="table table-sm table-hover">
+            <thead class="table-light">
+                <tr>
+                    <th><input type="checkbox" id="master-check"></th>
+                    <th>Date</th>
+                    <th>Subject</th>
+                    <th>Sender</th>
+                    <th>Action</th>
+                </tr>
+            </thead>
+            <tbody id="email-table"></tbody>
+        </table>
+        <div id="pagination-area" class="pb-5"></div>
+    </div>
+
     <script>
-        async function loadEmails(folder) {
-            document.getElementById('folder-name').innerText = folder;
-            document.getElementById('hidden-folder').value = folder;
-            const tbody = document.getElementById('email-table');
-            tbody.innerHTML = '<tr><td colspan="4" class="text-center">Fetching emails...</td></tr>';
+        let currentPage = 1;
+        let activeFolder = '';
+
+        function initLoad(folder) {
+            activeFolder = folder;
+            currentPage = 1;
+            document.getElementById('email-table').innerHTML = '';
+            loadEmails();
+        }
+
+        async function loadEmails() {
+            document.getElementById('current-folder').innerText = activeFolder;
+            document.getElementById('hidden-folder').value = activeFolder;
             
-            const fd = new FormData(); fd.append('folder', folder);
+            const fd = new FormData();
+            fd.append('folder', activeFolder);
+            fd.append('page', currentPage);
+
             const res = await fetch('/get_emails', {method:'POST', body:fd});
             const data = await res.json();
             
-            tbody.innerHTML = '';
+            const tbody = document.getElementById('email-table');
             data.emails.forEach(e => {
                 tbody.innerHTML += `
                 <tr>
                     <td><input type="checkbox" name="msg_ids[]" value="${e.id}" form="bulk-form" class="row-check"></td>
+                    <td class="date-col">${e.date}</td>
                     <td>${e.subject}</td>
                     <td>${e.sender}</td>
-                    <td><a href="/download_raw/${folder}/${e.id}" class="btn btn-sm btn-outline-dark">Download Full Source</a></td>
+                    <td><a href="/download_raw/${activeFolder}/${e.id}" class="btn btn-sm btn-link">Download Full Source</a></td>
                 </tr>`;
             });
 
+            const pagArea = document.getElementById('pagination-area');
+            if (data.has_more) {
+                pagArea.innerHTML = `<button class="btn btn-outline-primary w-100" onclick="currentPage++; loadEmails()">Load Next 100</button>`;
+            } else {
+                pagArea.innerHTML = `<p class="text-center text-muted">All emails loaded.</p>`;
+            }
+            setupCheckboxes();
+        }
+
+        function setupCheckboxes() {
+            const master = document.getElementById('master-check');
             const checks = document.querySelectorAll('.row-check');
-            const bulkBtn = document.getElementById('bulk-btn');
-            document.getElementById('master-check').onclick = (e) => {
-                checks.forEach(c => c.checked = e.target.checked);
-                bulkBtn.disabled = !e.target.checked;
+            const btn = document.getElementById('bulk-btn');
+            master.onclick = () => {
+                checks.forEach(c => c.checked = master.checked);
+                btn.disabled = !master.checked;
             };
             checks.forEach(c => c.onchange = () => {
-                bulkBtn.disabled = ![...checks].some(x => x.checked);
+                btn.disabled = ![...checks].some(x => x.checked);
             });
         }
     </script>
