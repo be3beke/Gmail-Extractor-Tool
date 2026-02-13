@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gmail Extractor</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { background-color: #f4f6f9; }
+        .sidebar { height: 100vh; overflow-y: auto; border-right: 1px solid #ddd; background: white; }
+        .email-list { max-height: 80vh; overflow-y: auto; }
+        .folder-link { cursor: pointer; }
+        .folder-link:hover { background-color: #e9ecef; }
+    </style>
+</head>
+<body>
+
+{% if page == 'login' %}
+<div class="container d-flex justify-content-center align-items-center" style="height: 100vh;">
+    <div class="card p-4 shadow" style="width: 400px;">
+        <h3 class="text-center mb-3">Gmail Connect</h3>
+        {% with messages = get_flashed_messages() %}
+            {% if messages %}
+                <div class="alert alert-danger">{{ messages[0] }}</div>
+            {% endif %}
+        {% endwith %}
+        <form method="POST">
+            <div class="mb-3">
+                <label>Email Address</label>
+                <input type="email" name="email" class="form-control" required placeholder="you@gmail.com">
+            </div>
+            <div class="mb-3">
+                <label>App Password</label>
+                <input type="password" name="password" class="form-control" required placeholder="xxxx xxxx xxxx xxxx">
+                <small class="text-muted">Use an App Password, not your login password.</small>
+            </div>
+            <button type="submit" class="btn btn-primary w-100">Connect</button>
+        </form>
+    </div>
+</div>
+
+{% elif page == 'dashboard' %}
+<div class="container-fluid">
+    <div class="row">
+        <div class="col-md-3 sidebar p-3">
+            <h4>Folders</h4>
+            <ul class="list-group list-group-flush">
+                {% for folder in folders %}
+                <li class="list-group-item folder-link" onclick="loadEmails('{{ folder }}')">
+                    {{ folder }}
+                </li>
+                {% endfor %}
+            </ul>
+            <hr>
+            <a href="/logout" class="btn btn-outline-danger w-100">Logout</a>
+        </div>
+
+        <div class="col-md-9 p-4">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h3 id="current-folder-title">Select a Folder</h3>
+                
+                <form id="bulk-form" action="/bulk_download" method="POST">
+                    <input type="hidden" name="folder" id="hidden-folder-input">
+                    <button type="submit" class="btn btn-success" id="bulk-btn" disabled>
+                        Download Selected (.zip)
+                    </button>
+                </form>
+            </div>
+
+            <div class="card shadow-sm">
+                <div class="card-body email-list">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th scope="col" width="5%"><input type="checkbox" id="select-all"></th>
+                                <th scope="col">Subject</th>
+                                <th scope="col">Sender</th>
+                                <th scope="col" class="text-end">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="email-tbody">
+                            <tr><td colspan="4" class="text-center">Select a folder to view emails.</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    let currentFolder = '';
+
+    // Load emails via AJAX
+    async function loadEmails(folder) {
+        currentFolder = folder;
+        document.getElementById('current-folder-title').innerText = folder;
+        document.getElementById('hidden-folder-input').value = folder;
+        document.getElementById('email-tbody').innerHTML = '<tr><td colspan="4" class="text-center">Loading...</td></tr>';
+
+        const formData = new FormData();
+        formData.append('folder', folder);
+
+        const response = await fetch('/get_emails', { method: 'POST', body: formData });
+        const data = await response.json();
+
+        const tbody = document.getElementById('email-tbody');
+        tbody.innerHTML = '';
+
+        if (data.error) {
+            tbody.innerHTML = `<tr><td colspan="4" class="text-danger">${data.error}</td></tr>`;
+            return;
+        }
+
+        if (data.emails.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="4" class="text-center">No emails found in this folder.</td></tr>';
+            return;
+        }
+
+        data.emails.forEach(email => {
+            const row = `
+                <tr>
+                    <td><input type="checkbox" name="msg_ids[]" value="${email.id}" form="bulk-form" class="email-checkbox"></td>
+                    <td>${email.subject}</td>
+                    <td>${email.sender}</td>
+                    <td class="text-end">
+                        <a href="/download_raw/${folder}/${email.id}" class="btn btn-sm btn-outline-primary">Download .eml</a>
+                    </td>
+                </tr>
+            `;
+            tbody.innerHTML += row;
+        });
+
+        attachCheckboxListeners();
+    }
+
+    // Handle "Select All" and Enable/Disable Bulk Download button
+    function attachCheckboxListeners() {
+        const checkboxes = document.querySelectorAll('.email-checkbox');
+        const selectAll = document.getElementById('select-all');
+        const bulkBtn = document.getElementById('bulk-btn');
+
+        function toggleButton() {
+            const anyChecked = Array.from(checkboxes).some(cb => cb.checked);
+            bulkBtn.disabled = !anyChecked;
+        }
+
+        selectAll.onclick = function() {
+            checkboxes.forEach(cb => cb.checked = this.checked);
+            toggleButton();
+        }
+
+        checkboxes.forEach(cb => {
+            cb.onclick = toggleButton;
+        });
+    }
+</script>
+{% endif %}
+
+</body>
+</html>
