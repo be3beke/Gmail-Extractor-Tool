@@ -6,7 +6,7 @@ import io
 import zipfile
 
 app = Flask(__name__)
-app.secret_key = 'gmail_extractor_key_2026'
+app.secret_key = 'gmail_vault_2026' # Change this to any random string
 
 def get_imap_conn():
     if 'email_user' not in session or 'email_pass' not in session:
@@ -36,7 +36,7 @@ def index():
             mail.logout()
             return redirect(url_for('dashboard'))
         else:
-            flash("Login failed. Check your App Password.")
+            flash("Login failed. Verify your Gmail address and App Password.")
     return render_template('index.html', page='login')
 
 @app.route('/dashboard')
@@ -61,7 +61,9 @@ def get_emails():
         mail.select(f'"{folder}"', readonly=True)
         _, messages = mail.search(None, 'ALL')
         all_ids = messages[0].split()
-        all_ids.reverse() # Sort Newest First
+        
+        # Sort Newest First
+        all_ids.reverse()
         
         start = (page - 1) * per_page
         end = start + per_page
@@ -69,6 +71,7 @@ def get_emails():
         
         email_list = []
         for num in page_ids:
+            # Fetch Subject, From, and Date specifically for performance
             _, data = mail.fetch(num, '(BODY[HEADER.FIELDS (SUBJECT FROM DATE)])')
             msg = email.message_from_bytes(data[0][1])
             email_list.append({
@@ -90,7 +93,12 @@ def download_raw(folder, msg_id):
     mail = get_imap_conn()
     mail.select(f'"{folder}"', readonly=True)
     _, data = mail.fetch(msg_id, '(RFC822)')
-    return send_file(io.BytesIO(data[0][1]), mimetype='text/plain', as_attachment=True, download_name=f"msg_{msg_id}.txt")
+    return send_file(
+        io.BytesIO(data[0][1]), 
+        mimetype='text/plain', 
+        as_attachment=True, 
+        download_name=f"email_{msg_id}.txt"
+    )
 
 @app.route('/bulk_download', methods=['POST'])
 def bulk_download():
@@ -106,7 +114,12 @@ def bulk_download():
             zf.writestr(f"email_{mid}.txt", data[0][1])
     
     memory_file.seek(0)
-    return send_file(memory_file, mimetype='application/zip', as_attachment=True, download_name="emails_export.zip")
+    return send_file(
+        memory_file, 
+        mimetype='application/zip', 
+        as_attachment=True, 
+        download_name=f"{folder}_export.zip"
+    )
 
 @app.route('/logout')
 def logout():
