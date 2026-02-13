@@ -1,13 +1,13 @@
 import imaplib
 import email
 from email.header import decode_header
-from email.utils import parsedate_to_datetime # New Import
+from email.utils import parsedate_to_datetime
 from flask import Flask, render_template, request, session, redirect, url_for, send_file, flash, jsonify
 import io
 import zipfile
 
 app = Flask(__name__)
-app.secret_key = 'gmail_clean_date_v3'
+app.secret_key = 'gmail_extractor_pro_2026_v4'
 
 def get_imap_conn():
     if 'email_user' not in session or 'email_pass' not in session:
@@ -30,15 +30,13 @@ def decode_str(s):
             return header_value.decode('utf-8', errors='ignore')
     return str(header_value)
 
-# New Helper: Formats date to "YYYY-MM-DD HH:MM"
 def clean_date(date_str):
     if not date_str: return ""
     try:
         dt = parsedate_to_datetime(date_str)
-        # Return format: 2026-02-13 14:30 (No timezone)
-        return dt.strftime('%Y-%m-%d %H:%M') 
+        return dt.strftime('%Y-%m-%d %H:%M')
     except:
-        return date_str # Return original if parsing fails
+        return date_str
 
 @app.route('/', methods=['GET', 'POST'])
 def index():
@@ -75,10 +73,9 @@ def get_emails():
     try:
         mail.select(f'"{folder}"', readonly=True)
         _, search_data = mail.search(None, 'ALL')
-        
-        # Parse IDs to integers for correct sorting
         all_ids = [int(id) for id in search_data[0].split()] if search_data[0] else []
         
+        # Proper Numeric Sort
         if sort_order == 'newest':
             all_ids.sort(reverse=True)
         else:
@@ -97,13 +94,10 @@ def get_emails():
                     'id': str(num),
                     'subject': decode_str(msg["Subject"]),
                     'sender': decode_str(msg["From"]),
-                    'date': clean_date(decode_str(msg["Date"])) # Apply clean_date here
+                    'date': clean_date(decode_str(msg["Date"]))
                 })
             
-        return jsonify({
-            'emails': email_list,
-            'has_more': end < len(all_ids)
-        })
+        return jsonify({'emails': email_list, 'has_more': end < len(all_ids)})
     except Exception as e:
         return jsonify({'error': str(e)})
 
@@ -120,15 +114,13 @@ def bulk_download():
     msg_ids = request.form.getlist('msg_ids[]')
     mail = get_imap_conn()
     mail.select(f'"{folder}"', readonly=True)
-    
     memory_file = io.BytesIO()
     with zipfile.ZipFile(memory_file, 'w') as zf:
         for mid in msg_ids:
             _, data = mail.fetch(mid, '(RFC822)')
             zf.writestr(f"email_{mid}.txt", data[0][1])
-    
     memory_file.seek(0)
-    return send_file(memory_file, mimetype='application/zip', as_attachment=True, download_name=f"{folder}_export.zip")
+    return send_file(memory_file, mimetype='application/zip', as_attachment=True, download_name=f"{folder}_bulk_export.zip")
 
 @app.route('/logout')
 def logout():
