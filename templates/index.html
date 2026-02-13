@@ -2,68 +2,94 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Gmail Extractor Pro</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
-        body { background: #f4f6f9; font-family: 'Inter', sans-serif; }
-        .sidebar { height: 100vh; background: #2c3e50; color: white; position: fixed; width: 250px; padding: 20px; overflow-y: auto; }
+        body { background: #f8f9fa; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        .sidebar { height: 100vh; background: #212529; color: white; position: fixed; width: 250px; padding: 20px; overflow-y: auto; z-index: 1000; }
         .main-content { margin-left: 250px; padding: 30px; }
-        .folder-link { cursor: pointer; padding: 10px; border-radius: 6px; color: #bdc3c7; text-decoration: none; display: block; transition: 0.2s; }
-        .folder-link:hover { background: #34495e; color: white; }
-        .table-container { background: white; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
-        .sortable { cursor: pointer; color: #0d6efd; text-decoration: underline; }
-        .sortable:hover { color: #0a58ca; }
+        .folder-link { cursor: pointer; padding: 12px; border-radius: 6px; color: #adb5bd; text-decoration: none; display: block; transition: 0.3s; }
+        .folder-link:hover { background: #343a40; color: white; }
+        .folder-link.active { background: #0d6efd; color: white; }
+        .email-table-container { background: white; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); overflow: hidden; }
+        .date-col { cursor: pointer; user-select: none; color: #0d6efd; }
+        .date-col:hover { text-decoration: underline; }
+        .loading-overlay { display: none; text-align: center; padding: 20px; }
     </style>
 </head>
 <body>
 
 {% if page == 'login' %}
-<div class="container py-5 text-center">
+<div class="container py-5">
     <div class="row justify-content-center">
-        <div class="col-md-4 card shadow p-4 mt-5">
-            <h3 class="mb-4">Gmail Connector</h3>
+        <div class="col-md-4 card shadow-lg p-4 mt-5">
+            <h2 class="text-center mb-4">Gmail Connector</h2>
             <form method="POST">
-                <input type="email" name="email" class="form-control mb-3" placeholder="Gmail Address" required>
-                <input type="password" name="password" class="form-control mb-3" placeholder="App Password" required>
-                <button class="btn btn-primary w-100">Connect</button>
+                <div class="mb-3">
+                    <input type="email" name="email" class="form-control" placeholder="Gmail Address" required>
+                </div>
+                <div class="mb-3">
+                    <input type="password" name="password" class="form-control" placeholder="App Password" required>
+                </div>
+                <button class="btn btn-primary w-100 py-2">Connect Account</button>
             </form>
-            {% with msgs = get_flashed_messages() %}{% if msgs %}<p class="text-danger mt-3">{{msgs[0]}}</p>{% endif %}{% endwith %}
+            {% with msgs = get_flashed_messages() %}
+                {% if msgs %}<p class="text-danger mt-3 text-center small">{{msgs[0]}}</p>{% endif %}
+            {% endwith %}
         </div>
     </div>
 </div>
 {% else %}
+
 <div class="sidebar">
-    <h5 class="mb-4">Folders</h5>
-    {% for f in folders %}<a class="folder-link" onclick="initFolder('{{f}}')">📁 {{f}}</a>{% endfor %}
-    <hr>
-    <a href="/logout" class="btn btn-outline-danger btn-sm w-100">Logout</a>
+    <h4 class="mb-4 text-white">Gmail Labels</h4>
+    <div id="folder-list">
+        {% for f in folders %}
+            <a class="folder-link" onclick="initFolder(this, '{{f}}')">📁 {{f}}</a>
+        {% endfor %}
+    </div>
+    <hr class="my-4">
+    <a href="/logout" class="btn btn-outline-danger btn-sm w-100">Sign Out</a>
 </div>
 
 <div class="main-content">
-    <div class="d-flex justify-content-between mb-4">
-        <h2 id="folder-title">Select Folder</h2>
-        <form id="bulk-form" action="/bulk_download" method="POST">
-            <input type="hidden" name="folder" id="hidden-folder">
-            <button type="submit" id="bulk-btn" class="btn btn-success" disabled>Download Selected (.zip)</button>
-        </form>
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2 id="folder-title">Select a Folder</h2>
+        <div class="d-flex gap-2">
+            <form id="bulk-form" action="/bulk_download" method="POST">
+                <input type="hidden" name="folder" id="hidden-folder">
+                <button type="submit" id="bulk-btn" class="btn btn-success shadow-sm" disabled>Download Selected (.zip)</button>
+            </form>
+        </div>
     </div>
 
-    <input type="text" id="search-bar" class="form-control mb-3 shadow-sm" placeholder="Search current page..." onkeyup="searchTable()">
+    <div class="mb-4">
+        <input type="text" id="search-bar" class="form-control form-control-lg border-2 shadow-sm" 
+               placeholder="🔍 Search current page by Subject or Sender..." onkeyup="searchLocal()">
+    </div>
 
-    <div class="table-container">
+    <div class="email-table-container">
         <table class="table table-hover mb-0">
             <thead class="table-light">
                 <tr>
                     <th width="40"><input type="checkbox" id="master-check" class="form-check-input"></th>
-                    <th width="180" class="sortable" onclick="toggleSort()">Date <span id="sort-icon">▼</span></th>
+                    <th width="180" class="date-col" onclick="toggleSort()">Date <span id="sort-icon">▼</span></th>
                     <th>Subject</th>
                     <th>Sender</th>
-                    <th width="80">File</th>
+                    <th width="100">Format</th>
                 </tr>
             </thead>
-            <tbody id="email-table"></tbody>
+            <tbody id="email-table">
+                <tr><td colspan="5" class="text-center py-5 text-muted">Click a folder on the left to start.</td></tr>
+            </tbody>
         </table>
+        <div id="loading-spinner" class="loading-overlay">
+            <div class="spinner-border text-primary" role="status"></div>
+            <p class="mt-2 text-muted">Fetching emails...</p>
+        </div>
     </div>
+    
     <div id="pagination-wrapper" class="mt-4 pb-5"></div>
 </div>
 
@@ -72,21 +98,40 @@
     let currentFolder = '';
     let currentSort = 'newest';
 
-    function initFolder(folder) {
+    // 1. Initialize folder click
+    function initFolder(element, folder) {
+        // UI Updates
+        document.querySelectorAll('.folder-link').forEach(l => l.classList.remove('active'));
+        element.classList.add('active');
+        
         currentFolder = folder;
+        currentPage = 1;
+        document.getElementById('email-table').innerHTML = ''; 
+        document.getElementById('search-bar').value = '';
+        fetchEmails();
+    }
+
+    // 2. Toggle Sort Order
+    function toggleSort() {
+        if (!currentFolder) return;
+        currentSort = (currentSort === 'newest') ? 'oldest' : 'newest';
+        document.getElementById('sort-icon').innerText = (currentSort === 'newest') ? '▼' : '▲';
+        
+        // Reset to first page and clear table for new sort
         currentPage = 1;
         document.getElementById('email-table').innerHTML = '';
         fetchEmails();
     }
 
-    function toggleSort() {
-        currentSort = (currentSort === 'newest') ? 'oldest' : 'newest';
-        document.getElementById('sort-icon').innerText = (currentSort === 'newest') ? '▼' : '▲';
-        if(currentFolder) initFolder(currentFolder);
-    }
-
+    // 3. Fetch Data from Backend
     async function fetchEmails() {
-        if(!currentFolder) return;
+        if (!currentFolder) return;
+        
+        const spinner = document.getElementById('loading-spinner');
+        const tbody = document.getElementById('email-table');
+        const pagWrapper = document.getElementById('pagination-wrapper');
+
+        spinner.style.display = 'block';
         document.getElementById('folder-title').innerText = currentFolder;
         document.getElementById('hidden-folder').value = currentFolder;
         
@@ -95,43 +140,71 @@
         fd.append('page', currentPage);
         fd.append('sort', currentSort);
 
-        const res = await fetch('/get_emails', {method: 'POST', body: fd});
-        const data = await res.json();
-        
-        const tbody = document.getElementById('email-table');
-        data.emails.forEach(e => {
-            tbody.innerHTML += `
-            <tr>
-                <td><input type="checkbox" name="msg_ids[]" value="${e.id}" form="bulk-form" class="row-check form-check-input"></td>
-                <td class="text-muted small">${e.date}</td>
-                <td><strong>${e.subject}</strong></td>
-                <td>${e.sender}</td>
-                <td><a href="/download_raw/${currentFolder}/${e.id}" class="btn btn-sm btn-link">.txt</a></td>
-            </tr>`;
-        });
+        try {
+            const res = await fetch('/get_emails', { method: 'POST', body: fd });
+            const data = await res.json();
+            
+            spinner.style.display = 'none';
 
-        const pag = document.getElementById('pagination-wrapper');
-        pag.innerHTML = data.has_more ? 
-            `<button class="btn btn-primary w-100" onclick="currentPage++; fetchEmails()">Load More</button>` : 
-            `<p class="text-center text-muted">All emails loaded.</p>`;
-        bindEvents();
+            if (data.emails.length === 0 && currentPage === 1) {
+                tbody.innerHTML = '<tr><td colspan="5" class="text-center py-5">No emails found in this folder.</td></tr>';
+                return;
+            }
+
+            data.emails.forEach(e => {
+                const row = `
+                <tr>
+                    <td><input type="checkbox" name="msg_ids[]" value="${e.id}" form="bulk-form" class="row-check form-check-input"></td>
+                    <td class="text-muted" style="font-size:0.85rem">${e.date_display}</td>
+                    <td><strong>${e.subject}</strong></td>
+                    <td>${e.sender}</td>
+                    <td><a href="/download_raw/${currentFolder}/${e.id}" class="btn btn-sm btn-outline-secondary">.txt</a></td>
+                </tr>`;
+                tbody.innerHTML += row;
+            });
+
+            if (data.has_more) {
+                pagWrapper.innerHTML = `<button class="btn btn-primary w-100 p-2 shadow-sm" onclick="currentPage++; fetchEmails()">Load Next 100 Emails</button>`;
+            } else {
+                pagWrapper.innerHTML = `<p class="text-center text-muted mt-3">End of folder reached.</p>`;
+            }
+            bindEvents();
+        } catch (err) {
+            spinner.style.display = 'none';
+            alert("Error fetching emails. Check console.");
+            console.error(err);
+        }
     }
 
-    function searchTable() {
+    // 4. Local Search Filter
+    function searchLocal() {
         const query = document.getElementById('search-bar').value.toLowerCase();
-        document.querySelectorAll('#email-table tr').forEach(row => {
-            row.style.display = row.innerText.toLowerCase().includes(query) ? "" : "none";
+        const rows = document.querySelectorAll('#email-table tr');
+        rows.forEach(row => {
+            const text = row.innerText.toLowerCase();
+            row.style.display = text.includes(query) ? "" : "none";
         });
     }
 
+    // 5. Checkbox Logic
     function bindEvents() {
         const master = document.getElementById('master-check');
         const checks = document.querySelectorAll('.row-check');
-        const btn = document.getElementById('bulk-btn');
-        master.onclick = () => { checks.forEach(c => c.checked = master.checked); btn.disabled = !master.checked; };
-        checks.forEach(c => c.onchange = () => { btn.disabled = ![...checks].some(x => x.checked); });
+        const bulkBtn = document.getElementById('bulk-btn');
+
+        master.onclick = () => {
+            checks.forEach(c => c.checked = master.checked);
+            bulkBtn.disabled = !master.checked;
+        };
+        
+        checks.forEach(c => {
+            c.onchange = () => {
+                bulkBtn.disabled = ![...checks].some(x => x.checked);
+            };
+        });
     }
 </script>
 {% endif %}
+
 </body>
 </html>
