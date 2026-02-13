@@ -5,10 +5,9 @@ from email.utils import parsedate_to_datetime
 from flask import Flask, render_template, request, session, redirect, url_for, send_file, flash, jsonify
 import io
 import zipfile
-from datetime import datetime
 
 app = Flask(__name__)
-app.secret_key = 'gmail_final_perfect_sort'
+app.secret_key = 'gmail_extractor_perfect_v5'
 
 def get_imap_conn():
     if 'email_user' not in session or 'email_pass' not in session:
@@ -27,6 +26,14 @@ def decode_str(s):
     if isinstance(header_value, bytes):
         return header_value.decode(charset or 'utf-8', errors='ignore')
     return str(header_value)
+
+def clean_date(date_str):
+    if not date_str: return ""
+    try:
+        dt = parsedate_to_datetime(date_str)
+        return dt.strftime('%Y-%m-%d %H:%M')
+    except:
+        return date_str
 
 @app.route('/', methods=['GET', 'POST'])
 def index():
@@ -58,22 +65,21 @@ def get_emails():
     per_page = 100
     
     mail = get_imap_conn()
-    if not mail: return jsonify({'error': 'Session expired'})
+    if not mail: return jsonify({'error': 'Session expired'}), 401
     
     try:
         mail.select(f'"{folder}"', readonly=True)
-        _, search_data = mail.search(None, 'ALL')
-        all_ids = [id.decode() for id in search_data[0].split()]
         
-        # Slicing the IDs first (for performance)
-        # We take a slightly larger slice to ensure sorting window is accurate
+        # Using IMAP SORT extension for perfect chronological order
+        sort_criteria = 'REVERSE DATE' if sort_order == 'newest' else 'DATE'
+        status, sort_res = mail.sort(sort_criteria, 'UTF-8', 'ALL')
+        all_ids = sort_res[0].split()
+        
+        if not all_ids:
+            return jsonify({'emails': [], 'has_more': False})
+
         start = (page - 1) * per_page
         end = start + per_page
-        
-        # We still need to reverse for 'newest' to get the latest IDs
-        if sort_order == 'newest':
-            all_ids.reverse()
-            
         page_ids = all_ids[start:end]
         
         email_list = []
@@ -81,32 +87,16 @@ def get_emails():
             _, data = mail.fetch(num, '(BODY[HEADER.FIELDS (SUBJECT FROM DATE)])')
             if data and data[0]:
                 msg = email.message_from_bytes(data[0][1])
-                raw_date = decode_str(msg["Date"])
-                
-                # Convert to sortable object
-                try:
-                    dt_obj = parsedate_to_datetime(raw_date)
-                except:
-                    dt_obj = datetime.min
-                
                 email_list.append({
-                    'id': num,
+                    'id': num.decode(),
                     'subject': decode_str(msg["Subject"]),
                     'sender': decode_str(msg["From"]),
-                    'date_obj': dt_obj,
-                    'date_display': dt_obj.strftime('%Y-%m-%d %H:%M')
+                    'date_display': clean_date(decode_str(msg["Date"]))
                 })
-        
-        # CRITICAL FIX: Sort the resulting list by the actual datetime object
-        email_list.sort(key=lambda x: x['date_obj'], reverse=(sort_order == 'newest'))
-
-        # Remove the datetime object before sending JSON
-        for e in email_list:
-            del e['date_obj']
             
         return jsonify({'emails': email_list, 'has_more': end < len(all_ids)})
     except Exception as e:
-        return jsonify({'error': str(e)})
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/download_raw/<folder>/<msg_id>')
 def download_raw(folder, msg_id):
@@ -127,7 +117,7 @@ def bulk_download():
             _, data = mail.fetch(mid, '(RFC822)')
             zf.writestr(f"email_{mid}.txt", data[0][1])
     memory_file.seek(0)
-    return send_file(memory_file, mimetype='application/zip', as_attachment=True, download_name=f"{folder}_export.zip")
+    return send_file(memory_file, mimetype='application/zip', as_attachment=True, download_name=f"bulk_export.zip")
 
 @app.route('/logout')
 def logout():
